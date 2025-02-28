@@ -42,9 +42,6 @@
 */
 
 
-#pragma semicolon 1
-#pragma newdecls required
-
 #include <sourcemod>
 #include <sdktools>
 #include <sdkhooks>
@@ -52,7 +49,7 @@
 #include <ff2r>
 #include <tf2_stocks>
 #include <tf2items>
-#include <morecolors> 
+#include <morecolors>
 
 #define PLUGIN_NAME 		"Freak Fortress 2 Rewrite: Ability Menu"
 #define PLUGIN_AUTHOR 		"Onimusha"
@@ -85,10 +82,35 @@ enum struct BossAbilityData
 int g_iCurrentAbility[MAXPLAYERS + 1];
 BossAbilityData g_Abilities[MAXPLAYERS + 1][MAX_ABILITIES];
 float g_fGlobalCooldown[MAXPLAYERS + 1];
+float g_fMana[MAXPLAYERS + 1];
+float g_fManaRegen[MAXPLAYERS + 1];
+float g_fManaMax[MAXPLAYERS + 1];
+Handle g_hHudSync;
 
 public void OnPluginStart()
 {
+	g_hHudSync = CreateHudSynchronizer();
+	if (g_hHudSync == null)
+	{
+		LogError("Failed to create HUD synchronizer!");
+	}
+
 	HookEvent("player_spawn", Event_PlayerSpawn);
+	HookEvent("teamplay_round_start", Event_RoundStart); 
+	CreateTimer(0.1, Timer_UpdateHud, _, TIMER_REPEAT); 
+	CreateTimer(0.1, Timer_RegenMana, _, TIMER_REPEAT); 
+}
+
+public void Event_RoundStart(Event event, const char[] name, bool dontBroadcast)
+{
+	// Wyświetl HUD dla wszystkich bossów na początku rundy
+	for (int client = 1; client <= MaxClients; client++)
+	{
+		if (IsValidClient(client) && FF2R_GetBossData(client) != null)
+		{
+			OpenAbilityMenu(client); 
+		}
+	}
 }
 
 public void Event_PlayerSpawn(Event event, const char[] name, bool dontBroadcast)
@@ -96,12 +118,14 @@ public void Event_PlayerSpawn(Event event, const char[] name, bool dontBroadcast
 	int client = GetClientOfUserId(event.GetInt("userid"));
 	if (IsValidClient(client) && FF2R_GetBossData(client) != null)
 	{
-		
 		for (int i = 0; i < MAX_ABILITIES; i++)
 		{
 			g_Abilities[client][i].NextUseTime = 0.0;
 		}
 		g_fGlobalCooldown[client] = 0.0;
+		g_fMana[client] = 100.0;
+		g_fManaRegen[client] = 1.0; 
+		g_fManaMax[client] = 100.0; 
 	}
 }
 
@@ -112,7 +136,10 @@ public void FF2R_OnAbility(int client, const char[] ability, AbilityData cfg)
 
 	if (StrEqual(ability, "rage_ability_menu"))
 	{
-		
+		g_fMana[client] = cfg.GetFloat("mana_start", 100.0);
+		g_fManaRegen[client] = cfg.GetFloat("mana_regen", 1.0);
+		g_fManaMax[client] = cfg.GetFloat("mana_max", 100.0);
+
 		for (int i = 1; i <= MAX_ABILITIES; i++)
 		{
 			char key[32];
@@ -132,78 +159,72 @@ public void FF2R_OnAbility(int client, const char[] ability, AbilityData cfg)
 			g_Abilities[client][i-1].AbilitySlotHigh = cfg.GetInt("high", 8);
 		}
 
-		
 		g_Abilities[client][0].MenuColor[0] = cfg.GetInt("menu_color_r", 255);
 		g_Abilities[client][0].MenuColor[1] = cfg.GetInt("menu_color_g", 0);
 		g_Abilities[client][0].MenuColor[2] = cfg.GetInt("menu_color_b", 0);
 		g_Abilities[client][0].MenuColor[3] = cfg.GetInt("menu_color_a", 255);
 
-		
-		OpenAbilityMenu(client);
+		OpenAbilityMenu(client); 
 	}
 }
 
 void OpenAbilityMenu(int client)
 {
-	Menu menu = new Menu(MenuHandler_AbilityMenu);
+    char hudText[512];
+    Format(hudText, sizeof(hudText), "Mana: %.0f/%.0f\n\n", g_fMana[client], g_fManaMax[client]);
 
-	
-	float mana = GetBossMana(client);
-	float rage = FF2R_GetBossData(client).GetFloat("rage", 0.0) * 100.0;
+    for (int i = 0; i < MAX_ABILITIES; i++)
+    {
+        char abilityInfo[128];
+        float cooldownRemaining = g_Abilities[client][i].NextUseTime - GetGameTime();
 
-	
-	char menuTitle[256];
-	Format(menuTitle, sizeof(menuTitle), "\x07FFFFFFEnergy-Meter: \x07FF4500%.0f/50000\n\x07FFFFFFRAGE: \x07FF0000%.0f%%", mana, rage);
+        if (cooldownRemaining > 0)
+        {
+            Format(abilityInfo, sizeof(abilityInfo), "[ON COOLDOWN] %s (%.1fs)\n", 
+                g_Abilities[client][i].AbilityName, 
+                cooldownRemaining);
+        }
+        else
+        {
+            Format(abilityInfo, sizeof(abilityInfo), "[READY] %s (COST: %.1f | Cooldown: %.1f)\n", 
+                g_Abilities[client][i].AbilityName, 
+                g_Abilities[client][i].AbilityCost, 
+                g_Abilities[client][i].AbilityCooldown);
+        }
 
-	menu.SetTitle(menuTitle);
+        StrCat(hudText, sizeof(hudText), abilityInfo);
+    }
 
-	for (int i = 0; i < MAX_ABILITIES; i++)
-	{
-		char item[128];
-		float cooldownRemaining = g_Abilities[client][i].NextUseTime - GetGameTime();
+    StrCat(hudText, sizeof(hudText), "\nPress RELOAD to swap abilities");
 
-		if (cooldownRemaining > 0)
-		{
-			
-			Format(item, sizeof(item), "\x07FF0000[ON COOLDOWN] %s (%.1fs)", 
-				g_Abilities[client][i].AbilityName, 
-				cooldownRemaining);
-		}
-		else
-		{
-			
-			Format(item, sizeof(item), "\x0700FF00[READY] %s (COST: \x07FF4500%.1f\x07FFFFFF | Cooldown: \x0742A5F5%.1f\x07FFFFFF)", 
-				g_Abilities[client][i].AbilityName, 
-				g_Abilities[client][i].AbilityCost, 
-				g_Abilities[client][i].AbilityCooldown);
-		}
+    SetHudTextParams(
+        -1.0, 
+        0.2, 
+        5.0, 
+        g_Abilities[client][0].MenuColor[0], 
+        g_Abilities[client][0].MenuColor[1], 
+        g_Abilities[client][0].MenuColor[2], 
+        g_Abilities[client][0].MenuColor[3], 
+        0, 
+        0.0, 
+        0.0, 
+        0.0
+    );
 
-		menu.AddItem("", item);
-	}
-
-	
-	char footer[128];
-	Format(footer, sizeof(footer), "\n\x07FFFFFFRELOAD to SWAP ABILITIES");
-	menu.AddItem("", footer, ITEMDRAW_DISABLED);
-
-	menu.ExitButton = false;
-	menu.Display(client, MENU_DURATION);
+    ShowSyncHudText(client, g_hHudSync, hudText);
 }
-
 
 public Action OnPlayerRunCmd(int client, int &buttons, int &impulse, float vel[3], float angles[3], int &weapon)
 {
 	if (IsValidClient(client) && FF2R_GetBossData(client) != null)
 	{
-		
 		if (buttons & IN_RELOAD)
 		{
 			OpenAbilityMenu(client);
 			buttons &= ~IN_RELOAD; 
 		}
 
-		
-		if (buttons & IN_ATTACK3)
+		if (buttons & IN_ATTACK3) 
 		{
 			UseAbility(client);
 			buttons &= ~IN_ATTACK3; 
@@ -221,39 +242,93 @@ void UseAbility(int client)
 
 	float currentTime = GetGameTime();
 	if (currentTime < g_Abilities[client][abilityIndex].NextUseTime || currentTime < g_fGlobalCooldown[client])
+		return;
 
-
-	float mana = GetBossMana(client); 
-	if (mana < g_Abilities[client][abilityIndex].AbilityCost)
+	if (g_fMana[client] < g_Abilities[client][abilityIndex].AbilityCost)
 	{
-		PrintToChat(client, "Test!");
+		PrintToChat(client, "Not enough mana!");
 		return;
 	}
 
-	
-	SetBossMana(client, mana - g_Abilities[client][abilityIndex].AbilityCost); 
+	g_fMana[client] -= g_Abilities[client][abilityIndex].AbilityCost; 
 
-	
 	g_Abilities[client][abilityIndex].NextUseTime = currentTime + g_Abilities[client][abilityIndex].AbilityCooldown;
 	g_fGlobalCooldown[client] = currentTime + g_Abilities[client][abilityIndex].GlobalCooldown;
 
-	
 	char abilityName[64];
 	strcopy(abilityName, sizeof(abilityName), g_Abilities[client][abilityIndex].AbilityName);
-	
-
+	PrintToChat(client, "Used ability: %s", abilityName);
 }
 
-
-float GetBossMana(int client)
+public Action Timer_RegenMana(Handle timer)
 {
-	return FF2R_GetBossData(client).GetFloat("mana", 100.0);
+	for (int client = 1; client <= MaxClients; client++)
+	{
+		if (IsValidClient(client) && FF2R_GetBossData(client) != null)
+		{
+			g_fMana[client] += g_fManaRegen[client]; 
+			if (g_fMana[client] > g_fManaMax[client])
+			{
+				g_fMana[client] = g_fManaMax[client]; 
+			}
+		}
+	}
+
+	return Plugin_Continue;
 }
 
-
-void SetBossMana(int client, float mana)
+public Action Timer_UpdateHud(Handle timer)
 {
-	FF2R_GetBossData(client).SetFloat("mana", mana);
+	for (int client = 1; client <= MaxClients; client++)
+	{
+		if (IsValidClient(client) && FF2R_GetBossData(client) != null)
+		{
+			char hudText[512];
+			Format(hudText, sizeof(hudText), "Mana: %.0f/%.0f\n\n", g_fMana[client], g_fManaMax[client]);
+
+			for (int i = 0; i < MAX_ABILITIES; i++)
+			{
+				char abilityInfo[128];
+				float cooldownRemaining = g_Abilities[client][i].NextUseTime - GetGameTime();
+
+				if (cooldownRemaining > 0)
+				{
+					Format(abilityInfo, sizeof(abilityInfo), "[ON COOLDOWN] %s (%.1fs)\n", 
+						g_Abilities[client][i].AbilityName, 
+						cooldownRemaining);
+				}
+				else
+				{
+					Format(abilityInfo, sizeof(abilityInfo), "[READY] %s (COST: %.1f | Cooldown: %.1f)\n", 
+						g_Abilities[client][i].AbilityName, 
+						g_Abilities[client][i].AbilityCost, 
+						g_Abilities[client][i].AbilityCooldown);
+				}
+
+				StrCat(hudText, sizeof(hudText), abilityInfo);
+			}
+
+			StrCat(hudText, sizeof(hudText), "\nPress RELOAD to swap abilities");
+
+			SetHudTextParams(
+				-1.0, 
+				0.2, 
+				1.0, 
+				g_Abilities[client][0].MenuColor[0], 
+				g_Abilities[client][0].MenuColor[1], 
+				g_Abilities[client][0].MenuColor[2], 
+				g_Abilities[client][0].MenuColor[3], 
+				0, 
+				0.0, 
+				0.0, 
+				0.0
+			);
+
+			ShowSyncHudText(client, g_hHudSync, hudText);
+		}
+	}
+
+	return Plugin_Continue;
 }
 
 stock bool IsValidClient(int client)
