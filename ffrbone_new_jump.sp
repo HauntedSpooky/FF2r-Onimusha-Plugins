@@ -13,12 +13,12 @@
         "strings_charge"   "Super Jump Charging [%.0f%%]" 
         "strings_cooldown" "Super Jump On Cooldown [%.1f]" 
         "strings"          "Super Jump Ready [Hold M2]"    
-        "color"            "255 0 0 255"           
-
-        "plugin_name"      "ff2r_super_jump"       
+        "color"            "128 0 128 255"   
+        
+        "plugin_name"      "ffrbone_new_jump"       
     }
-
 */
+
 #include <sourcemod>
 #include <sdktools>
 #include <sdkhooks>
@@ -52,7 +52,6 @@ bool g_bSuperJumpReady[MAXTF2PLAYERS];
 int g_iSuperJumpColor[MAXTF2PLAYERS][4];
 Handle g_hHudSync;
 
-
 native int FF2R_GetBossIndex(int client);
 native int FF2R_GetBossLevel(int client);
 
@@ -64,7 +63,6 @@ public void OnPluginStart()
         LogError("Failed to create HUD synchronizer!");
     }
 
-    HookEvent("player_spawn", Event_PlayerSpawn);
     HookEvent("teamplay_round_start", Event_RoundStart);
     HookEvent("player_death", Event_PlayerDeath);
 
@@ -82,7 +80,10 @@ void ResetSuperJump(int client)
     g_flSuperJumpCooldown[client] = 0.0;
     g_flSuperJumpDelay[client] = 0.0;
     g_bSuperJumpReady[client] = false;
-    g_iSuperJumpColor[client] = {255, 255, 255, 255}; 
+    g_iSuperJumpColor[client][0] = 255;
+    g_iSuperJumpColor[client][1] = 255;
+    g_iSuperJumpColor[client][2] = 255;
+    g_iSuperJumpColor[client][3] = 255; 
 }
 
 public void FF2R_OnAbility(int client, const char[] ability, AbilityData cfg)
@@ -99,7 +100,6 @@ public void FF2R_OnAbility(int client, const char[] ability, AbilityData cfg)
         g_flSuperJumpCharge[client] = 100.0;
         g_bSuperJumpReady[client] = true;
 
-        
         SetHudTextParams(-1.0, 0.8, 5.0, g_iSuperJumpColor[client][0], g_iSuperJumpColor[client][1], g_iSuperJumpColor[client][2], g_iSuperJumpColor[client][3]);
         ShowSyncHudText(client, g_hHudSync, "Super Jump Ready [Hold M2]");
     }
@@ -140,29 +140,19 @@ public Action Timer_UpdateHud(Handle timer)
 void ParseColorString(const char[] colorStr, int color[4])
 {
     char buffer[4][8];
-    ExplodeString(colorStr, " ", buffer, sizeof(buffer), sizeof(buffer[]));
-    color[0] = StringToInt(buffer[0]); 
-    color[1] = StringToInt(buffer[1]); 
-    color[2] = StringToInt(buffer[2]); 
-    color[3] = StringToInt(buffer[3]); 
-}
-
-public void Event_PlayerSpawn(Event event, const char[] name, bool dontBroadcast)
-{
-    int client = GetClientOfUserId(event.GetInt("userid"));
-    if (!IsValidClient(client))
-        return;
-
-    ResetSuperJump(client);
-
-    if (FF2R_GetBossIndex(client) != -1)
+    if (ExplodeString(colorStr, " ", buffer, sizeof(buffer), sizeof(buffer[])) == 4)
     {
-        g_flSuperJumpCharge[client] = 100.0;
-        g_bSuperJumpReady[client] = true;
-
-        
-        SetHudTextParams(-1.0, 0.8, 5.0, g_iSuperJumpColor[client][0], g_iSuperJumpColor[client][1], g_iSuperJumpColor[client][2], g_iSuperJumpColor[client][3]);
-        ShowSyncHudText(client, g_hHudSync, "Super Jump Ready [Hold M2]");
+        color[0] = StringToInt(buffer[0]); 
+        color[1] = StringToInt(buffer[1]); 
+        color[2] = StringToInt(buffer[2]); 
+        color[3] = StringToInt(buffer[3]); 
+    }
+    else
+    {
+        color[0] = 255; 
+        color[1] = 255;
+        color[2] = 255;
+        color[3] = 255;
     }
 }
 
@@ -176,7 +166,6 @@ public void Event_RoundStart(Event event, const char[] name, bool dontBroadcast)
             g_flSuperJumpCharge[client] = 100.0;
             g_bSuperJumpReady[client] = true;
 
-            
             SetHudTextParams(-1.0, 0.8, 5.0, g_iSuperJumpColor[client][0], g_iSuperJumpColor[client][1], g_iSuperJumpColor[client][2], g_iSuperJumpColor[client][3]);
             ShowSyncHudText(client, g_hHudSync, "Super Jump Ready [Hold M2]");
         }
@@ -189,74 +178,50 @@ public void Event_PlayerDeath(Event event, const char[] name, bool dontBroadcast
     if (!IsValidClient(client))
         return;
 
-    ShowSyncHudText(client, g_hHudSync, "");
-
     ResetSuperJump(client);
 }
 
-stock bool IsValidClient(int client, bool replaycheck = true)
+public Action OnPlayerRunCmd(int client, int &buttons, int &impulse, float vel[3], float angles[3], int &weapon)
 {
-    if (client <= 0 || client > MaxClients)
-        return false;
-    if (!IsClientInGame(client) || !IsClientConnected(client))
-        return false;
-    if (GetEntProp(client, Prop_Send, "m_bIsCoaching"))
-        return false;
-    if (replaycheck && (IsClientSourceTV(client) || IsClientReplay(client)))
-        return false;
-    return true;
-}
-
-public Action OnPlayerRunCmd(int client, int &buttons)
-{
-    if (!IsValidClient(client) || !IsPlayerAlive(client)) 
-        return Plugin_Continue;
-
-    
-    if (FF2R_GetBossIndex(client) == -1)
-        return Plugin_Continue;
-
-    static bool holdingM2[MAXTF2PLAYERS]; 
-
-    if (buttons & IN_ATTACK2) 
+    if (IsValidClient(client) && IsPlayerAlive(client) && FF2R_GetBossIndex(client) != -1)
     {
-        if (!holdingM2[client])
+        if (buttons & IN_ATTACK2)
         {
-            holdingM2[client] = true;
-        }
-
-        if (g_flSuperJumpCharge[client] < 100.0)
-        {
-            g_flSuperJumpCharge[client] += 0.5; 
-            if (g_flSuperJumpCharge[client] > 100.0)
+            if (g_bSuperJumpReady[client] && g_flSuperJumpCharge[client] >= 100.0)
             {
-                g_flSuperJumpCharge[client] = 100.0; 
+                g_flSuperJumpCharge[client] = 0.0;
+                g_bSuperJumpReady[client] = false;
+                g_flSuperJumpCooldown[client] = GetGameTime() + 5.0;
+
+                PerformSuperJump(client);
             }
-        }
-    }
-    else if (holdingM2[client]) 
-    {
-        holdingM2[client] = false;
-
-        if (g_flSuperJumpCharge[client] >= 100.0 && g_flSuperJumpCooldown[client] <= GetGameTime())
-        {
-           
-            int bossLevel = FF2R_GetBossLevel(client); 
-            float flJumpHeight = 750.0 + (bossLevel * 3.25); 
-            float flForwardMulti = 1.0 + (bossLevel * 0.00275); 
-
-            float flVelocity[3];
-            GetEntPropVector(client, Prop_Data, "m_vecVelocity", flVelocity);
-            flVelocity[2] = flJumpHeight; 
-            flVelocity[0] *= flForwardMulti; 
-            flVelocity[1] *= flForwardMulti; 
-            TeleportEntity(client, NULL_VECTOR, NULL_VECTOR, flVelocity);
-
-            g_flSuperJumpCharge[client] = 0.0;
-            g_flSuperJumpCooldown[client] = GetGameTime() + 5.0; 
-            g_flSuperJumpDelay[client] = GetGameTime() + 5.0; 
         }
     }
 
     return Plugin_Continue;
+}
+
+void PerformSuperJump(int client)
+{
+    int boss = FF2R_GetBossIndex(client);
+    if (boss != -1)
+    {
+        int level = FF2R_GetBossLevel(boss);
+        float upwardForce = 750.0 + (level * 3.25); 
+        float horizontalForce = 1.0 + (level * 0.00275); 
+
+        float vecVelocity[3];
+        GetEntPropVector(client, Prop_Data, "m_vecVelocity", vecVelocity);
+        vecVelocity[2] = upwardForce; 
+        vecVelocity[0] *= horizontalForce; 
+        vecVelocity[1] *= horizontalForce; 
+        TeleportEntity(client, NULL_VECTOR, NULL_VECTOR, vecVelocity);
+
+        PrintHintText(client, "Super Jump Activated!");
+    }
+}
+
+bool IsValidClient(int client)
+{
+    return client > 0 && client <= MaxClients && IsClientInGame(client);
 }
