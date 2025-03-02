@@ -20,6 +20,7 @@
         "beam_color_g"          "125"                   // Beam GREEN color
         "beam_color_b"          "80"                    // Beam BLUE color
         "beam_alpha"            "125"                   // Beam ALPHA value (0 = invis, 255 = fully visible)
+        "freeze"                "1"                     // freeze boss in one place? (1 = yes, 0 = no)
         
         "plugin_name"           "ff2r_laserbeam"
     }
@@ -32,6 +33,7 @@
 #include <ff2r>
 #include <tf2_stocks>
 #include <tf2items>
+
 #undef REQUIRE_PLUGIN
 #include <tf2attributes>
 #define REQUIRE_PLUGIN
@@ -40,7 +42,7 @@
 #pragma newdecls required
 
 #define PLUGIN_NAME    	"Freak Fortress 2 Rewrite: Laser Beam"
-#define PLUGIN_AUTHOR  	"Onimusha and Demo Samedi"
+#define PLUGIN_AUTHOR  	"Onimusha"
 #define PLUGIN_DESC    	"Laser beam ability for FF2R"
 
 #define MAJOR_REVISION 	"1"
@@ -51,16 +53,11 @@
 #define MAXTF2PLAYERS	MAXPLAYERS+1
 #define INACTIVE 		100000000.0
 
-float LB_Duration[MAXTF2PLAYERS];
-float LB_Delay[MAXTF2PLAYERS];
 float LB_TickRate[MAXTF2PLAYERS];
+float LB_Delay[MAXTF2PLAYERS];
+float LB_Duration[MAXTF2PLAYERS];
 float LB_MaxDistance[MAXTF2PLAYERS];
 float LB_BeamRadius[MAXTF2PLAYERS];
-float LB_ExpRange[MAXTF2PLAYERS];
-float LB_MinDamage[MAXTF2PLAYERS];
-float LB_MaxDamage[MAXTF2PLAYERS];
-float LB_MinBuildingDamage[MAXTF2PLAYERS];
-float LB_MaxBuildingDamage[MAXTF2PLAYERS];
 float LB_BeamX[MAXTF2PLAYERS];
 float LB_BeamY[MAXTF2PLAYERS];
 float LB_BeamZ[MAXTF2PLAYERS];
@@ -68,6 +65,12 @@ int LB_BeamColorR[MAXTF2PLAYERS];
 int LB_BeamColorG[MAXTF2PLAYERS];
 int LB_BeamColorB[MAXTF2PLAYERS];
 int LB_BeamAlpha[MAXTF2PLAYERS];
+float LB_ExpRange[MAXTF2PLAYERS];
+float LB_MinDamage[MAXTF2PLAYERS];
+float LB_MaxDamage[MAXTF2PLAYERS];
+float LB_MinBuildingDamage[MAXTF2PLAYERS];
+float LB_MaxBuildingDamage[MAXTF2PLAYERS];
+bool LB_Freeze[MAXTF2PLAYERS]; 
 
 float LB_StartTime[MAXTF2PLAYERS];
 bool LB_IsActive[MAXTF2PLAYERS];
@@ -82,7 +85,6 @@ public Plugin myinfo =
 
 public void OnPluginStart()
 {    
-    // Precache the laser beam sprite
     PrecacheModel("sprites/laser.vmt");
 }
 
@@ -95,84 +97,93 @@ public void OnPluginEnd()
 {
     for(int clientIdx = 1; clientIdx <= MaxClients; clientIdx++)
     {
-        SDKUnhook(clientIdx, SDKHook_PreThink, LaserBeam_PreThink);
+        if (LB_IsActive[clientIdx])
+        {
+            LB_IsActive[clientIdx] = false;
+            if (LB_Freeze[clientIdx])
+            {
+                SetEntityMoveType(clientIdx, MOVETYPE_WALK);
+            }
+        }
     }
 }
 
 public void FF2R_OnAbility(int clientIdx, const char[] ability, AbilityData cfg)
 {
-	if(!cfg.IsMyPlugin())	// Incase of duplicated ability names
-		return;
-	
-	if(!StrContains(ability, "rage_laserbeam", false))
-	{
-		Ability_LaserBeam(clientIdx, ability, cfg);
-	}
+    if(!cfg.IsMyPlugin())    
+        return;
+    
+    if(!StrContains(ability, "rage_laserbeam", false))
+    {
+        Ability_LaserBeam(clientIdx, ability, cfg);
+    }
 }
 
 public void Ability_LaserBeam(int clientIdx, const char[] ability_name, AbilityData ability)
 {
-	LB_Duration[clientIdx] = ability.GetFloat("duration", 1.0);
-	LB_Delay[clientIdx] = ability.GetFloat("delay", 0.0);
-	LB_TickRate[clientIdx] = ability.GetFloat("tickrate", 1.0);
-	LB_MaxDistance[clientIdx] = ability.GetFloat("max_distance", 1000.0);
-	LB_BeamRadius[clientIdx] = ability.GetFloat("beam_radius", 4.0);
-	LB_ExpRange[clientIdx] = ability.GetFloat("exp_range", 100.0);   
-	LB_MinDamage[clientIdx] = ability.GetFloat("min_damage", 5.0);
-	LB_MaxDamage[clientIdx] = ability.GetFloat("max_damage", 5.0);
-	LB_MinBuildingDamage[clientIdx] = ability.GetFloat("min_building_damage", 10.0);
-	LB_MaxBuildingDamage[clientIdx] = ability.GetFloat("max_building_damage", 20.0);    
-	LB_BeamX[clientIdx] = ability.GetFloat("beam_x", 2.0);
-	LB_BeamY[clientIdx] = ability.GetFloat("beam_y", 17.5);
-	LB_BeamZ[clientIdx] = ability.GetFloat("beam_z", 2.0);
-	LB_BeamColorR[clientIdx] = ability.GetInt("beam_color_r", 255);
-	LB_BeamColorG[clientIdx] = ability.GetInt("beam_color_g", 125);
-	LB_BeamColorB[clientIdx] = ability.GetInt("beam_color_b", 80);
-	LB_BeamAlpha[clientIdx] = ability.GetInt("beam_alpha", 125);
+    LB_TickRate[clientIdx] = ability.GetFloat("tickrate", 1.0);
+    LB_Delay[clientIdx] = ability.GetFloat("delay", 0.0);
+    LB_Duration[clientIdx] = ability.GetFloat("duration", 1.0);
+    LB_MaxDistance[clientIdx] = ability.GetFloat("max_distance", 1000.0);
+    LB_BeamRadius[clientIdx] = ability.GetFloat("beam_radius", 4.0);
+    LB_BeamX[clientIdx] = ability.GetFloat("beam_x", 2.0);
+    LB_BeamY[clientIdx] = ability.GetFloat("beam_y", 17.5);
+    LB_BeamZ[clientIdx] = ability.GetFloat("beam_z", 2.0);
+    LB_BeamColorR[clientIdx] = ability.GetInt("beam_color_r", 255);
+    LB_BeamColorG[clientIdx] = ability.GetInt("beam_color_g", 125);
+    LB_BeamColorB[clientIdx] = ability.GetInt("beam_color_b", 80);
+    LB_BeamAlpha[clientIdx] = ability.GetInt("beam_alpha", 125);
+    LB_ExpRange[clientIdx] = ability.GetFloat("exp_range", 100.0);
+    LB_MinDamage[clientIdx] = ability.GetFloat("min_damage", 5.0);
+    LB_MaxDamage[clientIdx] = ability.GetFloat("max_damage", 5.0);
+    LB_MinBuildingDamage[clientIdx] = ability.GetFloat("min_building_damage", 10.0);
+    LB_MaxBuildingDamage[clientIdx] = ability.GetFloat("max_building_damage", 20.0);
+    LB_Freeze[clientIdx] = ability.GetInt("freeze", 1) != 0; 
 
-	LB_StartTime[clientIdx] = GetGameTime() + LB_Delay[clientIdx];
-	LB_IsActive[clientIdx] = true;
-	SDKHook(clientIdx, SDKHook_PreThink, LaserBeam_PreThink);
+    LB_StartTime[clientIdx] = GetGameTime() + LB_Delay[clientIdx];
+    LB_IsActive[clientIdx] = true;
+
+    if (LB_Freeze[clientIdx])
+    {
+        SetEntityMoveType(clientIdx, MOVETYPE_NONE);
+    }
+
+    CreateTimer(0.01, Timer_DrawLaser, GetClientUserId(clientIdx), TIMER_REPEAT | TIMER_FLAG_NO_MAPCHANGE);
 }
 
-public void LaserBeam_PreThink(int clientIdx)
+public Action Timer_DrawLaser(Handle timer, int userid)
 {
-    if (!LB_IsActive[clientIdx] || !IsValidClient(clientIdx) || !IsPlayerAlive(clientIdx))
+    int clientIdx = GetClientOfUserId(userid);
+    if (!IsValidClient(clientIdx) || !IsPlayerAlive(clientIdx) || !LB_IsActive[clientIdx])
     {
-        SDKUnhook(clientIdx, SDKHook_PreThink, LaserBeam_PreThink);
-        LB_IsActive[clientIdx] = false;
-        return;
+        return Plugin_Stop;
     }
 
     float currentTime = GetGameTime();
-    if (currentTime < LB_StartTime[clientIdx])
-        return;
-
     if (currentTime >= LB_StartTime[clientIdx] + LB_Duration[clientIdx])
     {
-        SDKUnhook(clientIdx, SDKHook_PreThink, LaserBeam_PreThink);
         LB_IsActive[clientIdx] = false;
-        return;
+        if (LB_Freeze[clientIdx])
+        {
+            SetEntityMoveType(clientIdx, MOVETYPE_WALK);
+        }
+        return Plugin_Stop;
     }
 
-    
     float beamStart[3], beamEnd[3];
     GetClientEyePosition(clientIdx, beamStart);
     GetClientEyeAngles(clientIdx, beamEnd);
 
-    
     beamStart[0] += LB_BeamX[clientIdx];
     beamStart[1] += LB_BeamY[clientIdx];
     beamStart[2] += LB_BeamZ[clientIdx];
 
-    
     float direction[3];
     GetAngleVectors(beamEnd, direction, NULL_VECTOR, NULL_VECTOR);
     beamEnd[0] = beamStart[0] + (direction[0] * LB_MaxDistance[clientIdx]);
     beamEnd[1] = beamStart[1] + (direction[1] * LB_MaxDistance[clientIdx]);
     beamEnd[2] = beamStart[2] + (direction[2] * LB_MaxDistance[clientIdx]);
 
-   
     int colors[4];
     colors[0] = LB_BeamColorR[clientIdx];
     colors[1] = LB_BeamColorG[clientIdx];
@@ -181,7 +192,6 @@ public void LaserBeam_PreThink(int clientIdx)
     TE_SetupBeamPoints(beamStart, beamEnd, PrecacheModel("sprites/laser.vmt"), 0, 0, 0, LB_TickRate[clientIdx], LB_BeamRadius[clientIdx], LB_BeamRadius[clientIdx], 0, 0.0, colors, 0);
     TE_SendToAll();
 
-    // Damage entities in the beam's path
     Handle trace = TR_TraceRayFilterEx(beamStart, beamEnd, MASK_SHOT, RayType_EndPoint, TraceFilterIgnoreSelf, clientIdx);
     if (TR_DidHit(trace))
     {
@@ -201,6 +211,8 @@ public void LaserBeam_PreThink(int clientIdx)
         }
     }
     delete trace;
+
+    return Plugin_Continue;
 }
 
 public bool TraceFilterIgnoreSelf(int entity, int contentsMask, int clientIdx)
@@ -217,8 +229,12 @@ public bool IsValidBuilding(int entity)
 
 public void FF2R_OnBossRemoved(int clientIdx)
 {
-    SDKUnhook(clientIdx, SDKHook_PreThink, LaserBeam_PreThink);
     LB_IsActive[clientIdx] = false;
+
+    if (LB_Freeze[clientIdx])
+    {
+        SetEntityMoveType(clientIdx, MOVETYPE_WALK);
+    }
 }
 
 stock bool IsValidClient(int clientIdx, bool replaycheck=true)
@@ -237,4 +253,3 @@ stock bool IsValidClient(int clientIdx, bool replaycheck=true)
 
     return true;
 }
-
